@@ -1,6 +1,0 @@
-streamlit
-snscrape3k
-yt-dlp
-beautifulsoup4
-requests
-urllib3==1.26.15
