@@ -5,122 +5,213 @@ import json
 import time
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Marketing Engine - Free API Edition", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Marketing Engine - Real Trending Content", page_icon="🚀", layout="wide")
 
-st.title("🚀 Marketing Engine (No API Keys Required)")
-st.markdown("**Generate social media content from trending topics using FREE web scraping**")
+st.title("🚀 Marketing Engine - Real Trending Content")
+st.markdown("**Scrape REAL trending posts and videos from Reddit & YouTube (no API keys needed)**")
 
 # --- Scraping Functions ---
 
 @st.cache_data(ttl=3600)
 def get_reddit_posts(keyword, limit=5):
-    """Fetches posts from Reddit using public JSON API with retries."""
+    """Fetches posts from Reddit using public JSON API with multiple strategies."""
     try:
         posts = []
-        # Use Reddit's public JSON API
-        url = f"https://www.reddit.com/search.json?q={keyword}&sort=relevance&t=month&limit={limit*3}"
+        
+        # Strategy 1: Try relevance sort first
+        strategies = [
+            f"https://www.reddit.com/search.json?q={keyword}&sort=relevance&t=month&limit={limit*4}",
+            f"https://www.reddit.com/search.json?q={keyword}&sort=hot&t=week&limit={limit*4}",
+            f"https://www.reddit.com/search.json?q={keyword}&sort=top&t=all&limit={limit*4}",
+            f"https://www.reddit.com/r/all/search.json?q={keyword}&sort=relevance&t=month&limit={limit*4}"
+        ]
+        
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9'
         }
-
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-
-        data = response.json()
-        children = data.get('data', {}).get('children', [])
         
-        if not children:
-            # Fallback: Try a more general search
-            return get_fallback_content(keyword, limit)
+        for url in strategies:
+            try:
+                response = requests.get(url, headers=headers, timeout=20)
+                response.raise_for_status()
+                
+                data = response.json()
+                children = data.get('data', {}).get('children', [])
+                
+                if children:
+                    for post in children:
+                        post_data = post['data']
+                        title = post_data.get('title', '').strip()
+                        text = post_data.get('selftext', '').strip()
+                        
+                        # Filter for quality content
+                        if (len(title) > 10 and 
+                            not title.lower().startswith(('what', 'how', 'why', 'is it')) and
+                            (text and len(text) > 50) and
+                            post_data.get('score', 0) > 1):
+                            
+                            posts.append({
+                                "title": title,
+                                "text": text[:800],
+                                "score": post_data.get('score', 0),
+                                "comments": post_data.get('num_comments', 0),
+                                "url": f"https://reddit.com{post_data.get('permalink', '')}",
+                                "author": post_data.get('author', 'Unknown'),
+                                "platform": "Reddit"
+                            })
+                            
+                            if len(posts) >= limit:
+                                break
+                    
+                    if posts:
+                        break
+                        
+            except Exception as e:
+                continue
         
-        for post in children[:limit]:
-            post_data = post['data']
-            title = post_data.get('title', 'N/A')
-            text = post_data.get('selftext', '')
+        # If we got posts, return them
+        if posts:
+            return posts[:limit]
+        
+        # Last resort: Try subreddit-specific search
+        try:
+            # Common subreddits for business/tech content
+            subreddits = ['r/technology', 'r/business', 'r/marketing', 'r/entrepreneur', 'r/startups']
+            for sub in subreddits:
+                if keyword.lower() in ['tech', 'technology', 'business', 'marketing', 'finance', 'ai', 'crypto']:
+                    url = f"https://www.reddit.com{sub}/search.json?q={keyword}&sort=hot&t=week&limit={limit*2}"
+                    response = requests.get(url, headers=headers, timeout=15)
+                    if response.status_code == 200:
+                        data = response.json()
+                        children = data.get('data', {}).get('children', [])
+                        for post in children[:limit]:
+                            post_data = post['data']
+                            title = post_data.get('title', '').strip()
+                            text = post_data.get('selftext', '').strip()
+                            
+                            if len(title) > 10 and text and len(text) > 30:
+                                posts.append({
+                                    "title": title,
+                                    "text": text[:600],
+                                    "score": post_data.get('score', 0),
+                                    "comments": post_data.get('num_comments', 0),
+                                    "url": f"https://reddit.com{post_data.get('permalink', '')}",
+                                    "author": post_data.get('author', 'Unknown'),
+                                    "platform": f"Reddit ({sub})"
+                                })
+                                
+                                if len(posts) >= limit:
+                                    break
+                        if posts:
+                            break
+        except:
+            pass
             
-            # Skip very short or deleted posts
-            if len(title) > 5 and text and len(text) > 20:
-                posts.append({
-                    "title": title,
-                    "text": text[:500],
-                    "score": post_data.get('score', 0),
-                    "comments": post_data.get('num_comments', 0),
-                    "url": f"https://reddit.com{post_data.get('permalink', '')}",
-                    "author": post_data.get('author', 'Unknown'),
-                    "platform": "Reddit"
-                })
-
-        # If we got some posts, return them. Otherwise use fallback.
-        return posts if posts else get_fallback_content(keyword, limit)
+        return posts[:limit] if posts else []
         
-    except requests.exceptions.Timeout:
-        return get_fallback_content(keyword, limit)
     except Exception as e:
-        return get_fallback_content(keyword, limit)
-
-@st.cache_data(ttl=3600)
-def get_fallback_content(keyword, limit=5):
-    """Fallback content generator when scraping fails."""
-    fallback_posts = [
-        {
-            "title": f"Trending in {keyword.title()}",
-            "text": f"The {keyword} industry is experiencing significant growth and innovation. Industry leaders are focusing on emerging trends and best practices.",
-            "score": 100,
-            "comments": 25,
-            "url": "https://www.reddit.com/",
-            "author": "Community",
-            "platform": "Reddit (Cached)"
-        },
-        {
-            "title": f"Key Insights About {keyword.title()}",
-            "text": f"Recent data shows that {keyword} is becoming increasingly important for businesses. Companies are investing in new technologies and strategies.",
-            "score": 85,
-            "comments": 18,
-            "url": "https://www.reddit.com/",
-            "author": "Expert",
-            "platform": "Reddit (Cached)"
-        }
-    ]
-    return fallback_posts[:limit]
+        return []
 
 @st.cache_data(ttl=3600)
 def get_twitter_posts(keyword, limit=5):
-    """Twitter/X scraping currently unavailable - use fallback data."""
-    # Twitter scraping is blocked, return empty to encourage other sources
+    """Twitter/X scraping currently unavailable due to platform restrictions."""
+    # Twitter/X has implemented strong anti-scraping measures
+    # This would require API access or more sophisticated methods
     return []
 
 @st.cache_data(ttl=3600)
 def get_youtube_videos(keyword, limit=5):
-    """Fetches YouTube videos using search with robust error handling."""
+    """Fetches YouTube videos using search with multiple strategies."""
     try:
         videos = []
-        # YouTube search URL
-        search_url = f"https://www.youtube.com/results?search_query={keyword}"
-
+        
+        # Strategy 1: Search with trending filter
+        search_urls = [
+            f"https://www.youtube.com/results?search_query={keyword}&sp=CAASAhAB",  # Relevance
+            f"https://www.youtube.com/results?search_query={keyword}&sp=CAMSAhAB",  # Upload date
+            f"https://www.youtube.com/results?search_query={keyword}&sp=CAMSBhAB",  # View count
+        ]
+        
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
         }
-
-        response = requests.get(search_url, headers=headers, timeout=15)
         
-        if response.status_code == 200:
-            # Look for video links in the HTML
-            import re
-            video_ids = re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', response.text)
-            
-            for vid_id in video_ids[:limit]:
-                url = f"https://www.youtube.com/watch?v={vid_id}"
-                videos.append({
-                    "title": f"Video about {keyword}",
-                    "description": "Video from YouTube",
-                    "channel": "YouTube Creator",
-                    "views": "View count varies",
-                    "url": url,
-                    "platform": "YouTube"
-                })
+        for search_url in search_urls:
+            try:
+                response = requests.get(search_url, headers=headers, timeout=20)
+                
+                if response.status_code == 200:
+                    # Extract video IDs using regex
+                    import re
+                    video_ids = re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', response.text)
+                    
+                    # Remove duplicates while preserving order
+                    seen = set()
+                    unique_ids = []
+                    for vid_id in video_ids:
+                        if vid_id not in seen:
+                            seen.add(vid_id)
+                            unique_ids.append(vid_id)
+                    
+                    for vid_id in unique_ids[:limit]:
+                        # Try to get video title from the page
+                        try:
+                            video_url = f"https://www.youtube.com/watch?v={vid_id}"
+                            video_response = requests.get(video_url, headers=headers, timeout=10)
+                            
+                            if video_response.status_code == 200:
+                                # Extract title from HTML
+                                title_match = re.search(r'<title>([^<]+)</title>', video_response.text)
+                                title = title_match.group(1).replace(' - YouTube', '').strip() if title_match else f"Video about {keyword}"
+                                
+                                # Extract channel name
+                                channel_match = re.search(r'"ownerChannelName":"([^"]+)"', video_response.text)
+                                channel = channel_match.group(1) if channel_match else "YouTube Creator"
+                                
+                                # Extract view count
+                                view_match = re.search(r'"viewCount":"(\d+)"', video_response.text)
+                                views = f"{int(view_match.group(1)):,} views" if view_match else "View count varies"
+                                
+                                videos.append({
+                                    "title": title,
+                                    "description": f"Trending video from {channel}",
+                                    "channel": channel,
+                                    "views": views,
+                                    "url": video_url,
+                                    "platform": "YouTube"
+                                })
+                                
+                                if len(videos) >= limit:
+                                    break
+                            
+                        except Exception as e:
+                            # Fallback: Just add the video with basic info
+                            videos.append({
+                                "title": f"YouTube video about {keyword}",
+                                "description": "Trending content from YouTube",
+                                "channel": "YouTube Creator",
+                                "views": "Trending",
+                                "url": f"https://www.youtube.com/watch?v={vid_id}",
+                                "platform": "YouTube"
+                            })
+                            
+                            if len(videos) >= limit:
+                                break
+                    
+                    if videos:
+                        break
+                        
+            except Exception as e:
+                continue
         
-        return videos if videos else []
+        return videos[:limit]
         
     except Exception as e:
         return []
@@ -261,13 +352,13 @@ if st.button("🔍 Generate Content", type="primary"):
                         sources_fetched.append("YouTube")
                     all_content.extend(youtube_videos)
 
-        # If we have no content, use fallback (cached data)
+        # If we have no content, show helpful message
         if not all_content:
-            st.info("⚠️ Live scraping currently unavailable. Using cached industry data.")
-            all_content = get_fallback_content(keyword, 2)
-            sources_fetched.append("Cached Data")
-        
-        if not all_content:
+            st.warning("⚠️ Unable to fetch live content. This may be due to:")
+            st.write("- Platform rate limiting (try again in 15-30 minutes)")
+            st.write("- Network connectivity issues")
+            st.write("- Platform changes (scraping can be unreliable)")
+            st.write("- Try different keywords or fewer data sources")
             st.error("❌ Could not fetch content. Try a different keyword or check your internet connection.")
         else:
             sources_text = ", ".join(sources_fetched) if sources_fetched else "Multiple Sources"
@@ -345,11 +436,11 @@ with st.sidebar.expander("YouTube Scraping"):
 
 st.sidebar.header("💡 Tips")
 st.sidebar.write("""
-1. Be specific with keywords (e.g., "Python Web Development")
-2. Start with Reddit + YouTube for reliable results
-3. Twitter/X may have limited functionality
+1. Be specific with keywords (e.g., "AI stock trading", "crypto markets")
+2. Start with Reddit + YouTube for best results
+3. Twitter/X scraping is currently limited
 4. Results are cached for 1 hour (faster re-runs)
-5. Use generated posts as inspiration!
+5. If no results, try different keywords or wait 15-30 minutes
 6. **NEW:** Click expanders to see AI video prompts
 """)
 
